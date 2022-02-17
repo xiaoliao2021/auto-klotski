@@ -34,7 +34,13 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.Queue;
 
 public class MainActivity extends AppCompatActivity {
     public Handler handler = new Handler();
@@ -67,13 +73,6 @@ public class MainActivity extends AppCompatActivity {
         FloatingButtonService.onClickListener = view -> {
             Log.e("TAG", "onClickListener");
             getImage();
-//            Path path = new Path();
-//            path.moveTo(488, 371);
-//            for (int i = 484; i > 360; i -= (Math.random() * 8)) {
-//                path.lineTo(i, 371);
-//            }
-//            path.lineTo(360-100, 371);
-//            MyAccessibilityService.service.swipe2(path, 400L);
         };
     }
 
@@ -159,26 +158,180 @@ public class MainActivity extends AppCompatActivity {
             fos.close();
             String finalFileName = fileName;
             new Thread(() -> {
-//                String res = py.getModule("main").callAttr("get_input_list", finalFileName).toJava(String.class);
-//                Log.e("TAG", res);
-                String res = py.getModule("main").callAttr("main", finalFileName).toJava(String.class);
-                handler.postDelayed(()->{
-                    Toast.makeText(getApplicationContext(),"开始滑动",Toast.LENGTH_LONG).show();
-                },0);
-                for (String s : res.split(",")) {
-                    MyAccessibilityService.service.swipe(s.split(" "));
+                class Block {
+                    public int row;
+                    public int col;
+                    public int len;
+                    public boolean is_horizontal;
+
+                    public Block(int val) {
+                        is_horizontal = (val & (1 << 7)) != 0;
+                        len = ((val & (1 << 6)) >> 6) + 2;
+                        row = (val >> 3) & ((1 << 3) - 1);
+                        col = val & ((1 << 3) - 1);
+                    }
+                }
+                String res = py.getModule("main").callAttr("get_input_list", finalFileName).toJava(String.class);
+                Log.e("TAG", res);
+                String[] input = res.substring(1, res.length() - 1).split(", ");
+                Block[] blocks = new Block[input.length];
+                for (int i = 0; i < input.length; i++) {
+                    blocks[i] = new Block(Integer.parseInt(input[i]));
+                }
+                ArrayList<Integer> ret = solve(input);
+                handler.postDelayed(() -> {
+                    Toast.makeText(getApplicationContext(), "开始滑动:" + (ret.size() - 1), Toast.LENGTH_LONG).show();
+                }, 0);
+                int[] position = new int[]{45, 300, 673 - 45, 930 - 300};
+                int step_len = (position[2] + position[3]) / 12;
+                for (Integer key : ret) {
+                    int idx = (key >> 3);
+                    int step = (key & (((1 << 3) - 1)));
+                    Log.e("TAG", "idx:" + idx + "step:" + step);
+                    step = ((step & 0b100) != 0) ? -(step & 0b11) - 1 : step + 1;
+                    Log.e("TAG", "idx:" + idx + "step:" + step);
+                    Block op = blocks[idx];
+                    int s_x, e_x, s_y, e_y;
+                    s_x = e_x = (int) (position[0] + (op.col + 0.5) * step_len);
+                    s_y = e_y = (int) (position[1] + (op.row + 0.5) * step_len);
+                    if (op.is_horizontal) {
+                        op.col += step;
+                        e_x = (int) (position[0] + (op.col + 0.5) * step_len);
+                    } else {
+                        op.row += step;
+                        e_y = (int) (position[1] + (op.row + 0.5) * step_len);
+                    }
+                    Path path = new Path();
+                    path.moveTo(s_x, s_y);
+                    path.lineTo(e_x, e_y);
+                    if (MyAccessibilityService.service != null) {
+                        MyAccessibilityService.service.swipe2(path, 400);
+                    }
                     try {
-                        Thread.sleep(1000L);
+                        Thread.sleep(600);
                     } catch (InterruptedException e) {
                         e.printStackTrace();
                     }
                 }
-                handler.postDelayed(()->{
-                    Toast.makeText(getApplicationContext(),"结束滑动",Toast.LENGTH_LONG).show();
-                },0);
+//                String res2 = py.getModule("main").callAttr("main", finalFileName).toJava(String.class);
+//                for (String s : res2.split(",")) {
+//                    Log.e("TAG", s);
+//                }
+                handler.postDelayed(() -> {
+                    Toast.makeText(getApplicationContext(), "结束滑动", Toast.LENGTH_LONG).show();
+                }, 0);
             }).start();
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    public boolean check_target(int val) {
+        boolean is_horizontal = (val & (1 << 7)) != 0;
+        int row = (val >> 3) & ((1 << 3) - 1);
+        int col = val & ((1 << 3) - 1);
+        return is_horizontal && row == 2 && col == 4;
+    }
+
+    public long get_map_val(int[] block_values) {
+        long map_val = 0;
+        for (int val : block_values) {
+            boolean is_horizontal = (val & (1 << 7)) != 0;
+            int len = ((val & (1 << 6)) >> 6) + 2;
+            int row = (val >> 3) & ((1 << 3) - 1);
+            int col = val & ((1 << 3) - 1);
+            long mask = 0;
+            for (int i = 0; i < len; ++i) {
+                mask <<= (is_horizontal ? 1 : 6);
+                mask += 1;
+            }
+            map_val |= (mask << (row * 6 + col));
+        }
+        return map_val;
+    }
+
+    public int check(int val, int step, long map_val) {
+        boolean is_horizontal = (val & (1 << 7)) != 0;
+        int len = ((val & (1 << 6)) >> 6) + 2;
+        int row = (val >> 3) & ((1 << 3) - 1);
+        int col = val & ((1 << 3) - 1);
+        int new_s_col = col;
+        int new_e_col = col + (is_horizontal ? step : 0);
+        int new_s_row = row;
+        int new_e_row = row + (is_horizontal ? 0 : step);
+        if (is_horizontal) {
+            new_s_col = col + step;
+            new_e_col = new_s_col + len;
+        } else {
+            new_s_row = row + step;
+            new_e_row = new_s_row + len;
+        }
+        if (new_s_col < 0 || new_e_col > 6 || new_s_row < 0 || new_e_row > 6) return 0;
+        long mask = 0;
+        for (int i = 0; i < len; ++i) {
+            mask <<= (is_horizontal ? 1 : 6);
+            mask += 1;
+        }
+        map_val &= (~(mask << (row * 6 + col)));
+        if ((map_val & (mask << (new_s_row * 6 + new_s_col))) != 0) return 0;
+        int new_val = 1 << 8;
+        new_val |= (is_horizontal ? 1 << 7 : 0);
+        new_val |= ((len - 2) << 6);
+        new_val |= (new_s_row << 3);
+        new_val |= new_s_col;
+        return new_val;
+    }
+
+    public ArrayList<Integer> solve(String[] input) {
+        HashSet<Long> hashSet = new HashSet<>();
+        int len = input.length;
+        int[] data = new int[len];
+        len = 0;
+        for (String s : input) {
+            data[len++] = Integer.parseInt(s);
+        }
+        Queue<int[]> queue = new LinkedList<>();
+        Queue<ArrayList<Integer>> queue_res = new LinkedList<>();
+        queue.add(data);
+        queue_res.add(new ArrayList<>());
+        while (!queue.isEmpty()) {
+            int[] now = queue.poll();
+            ArrayList<Integer> now_res = queue_res.poll();
+            if (check_target(now[0])) {
+                return now_res;
+            }
+            long map_val = get_map_val(now);
+            if (hashSet.contains(map_val)) continue;
+            hashSet.add(map_val);
+            for (int i = 0; i < len; i++) {
+                for (int j = 1; j < 5; ++j) {
+                    int val = check(now[i], j, map_val);
+                    if (val != 0) {
+                        int[] tmp = Arrays.copyOf(now, len);
+                        tmp[i] = val;
+                        ArrayList<Integer> new_res = new ArrayList<>(now_res);
+                        new_res.add((j - 1) | (i << 3));
+                        queue.add(tmp);
+                        queue_res.add(new_res);
+                    } else {
+                        break;
+                    }
+                }
+                for (int j = 1; j < 5; ++j) {
+                    int val = check(now[i], -j, map_val);
+                    if (val != 0) {
+                        int[] tmp = Arrays.copyOf(now, len);
+                        tmp[i] = val;
+                        ArrayList<Integer> new_res = new ArrayList<>(now_res);
+                        new_res.add((j + 3) | (i << 3));
+                        queue.add(tmp);
+                        queue_res.add(new_res);
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+        return new ArrayList<>();
     }
 }

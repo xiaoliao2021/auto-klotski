@@ -17,9 +17,6 @@ import android.widget.Button;
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 
-/**
- * Created by dongzhong on 2018/5/30.
- */
 
 public class FloatingButtonService extends Service {
     public static boolean isStarted = false;

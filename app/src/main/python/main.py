@@ -201,5 +201,6 @@ def main(path):
         else:
             op.row += step
             e_y = int(position[1] + (op.row + 0.5) * step_len)
-        res_str += f'{s_x} {s_y} {e_x} {e_y} {time},'
+        # res_str += f'{s_x} {s_y} {e_x} {e_y} {time},'
+        res_str += f'{idx} {step},'
     return res_str[:-1]
