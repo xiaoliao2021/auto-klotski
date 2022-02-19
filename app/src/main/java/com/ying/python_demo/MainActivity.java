@@ -33,11 +33,8 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Date;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.Queue;
@@ -49,6 +46,21 @@ public class MainActivity extends AppCompatActivity {
     public ByteBuffer buffer;
     public int pixelStride, rowStride, screenWidth, screenHeight;
     public boolean workGetScreen = false;
+    public boolean run_work = false;
+
+    class Block {
+        public int row;
+        public int col;
+        public int len;
+        public boolean is_horizontal;
+
+        public Block(int val) {
+            is_horizontal = (val & (1 << 7)) != 0;
+            len = ((val & (1 << 6)) >> 6) + 2;
+            row = (val >> 3) & ((1 << 3) - 1);
+            col = val & ((1 << 3) - 1);
+        }
+    }
 
     @RequiresApi(api = Build.VERSION_CODES.M)
     @Override
@@ -70,9 +82,134 @@ public class MainActivity extends AppCompatActivity {
         Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
         startActivity(intent);
         startFloatingButtonService();
+        new Thread(() -> {
+            while (true) {
+                if (run_work) {
+                    final boolean[] cccc = {false};
+                    getImage(new CallBack() {
+                        @Override
+                        void onRes(Object res) {
+                            String res_str = (String) res;
+                            String[] input = res_str.substring(1, res_str.length() - 1).split(", ");
+                            Block[] blocks = new Block[input.length];
+                            for (int i = 0; i < input.length; i++) {
+                                blocks[i] = new Block(Integer.parseInt(input[i]));
+                            }
+                            long start_time = System.nanoTime();
+                            ArrayList<Integer> ret = solve(input);
+                            long end_time = System.nanoTime();
+                            handler.postDelayed(() -> {
+                                Toast.makeText(getApplicationContext(), "步数:" + (ret.size() - 1) +
+                                        "耗时:" + (end_time - start_time) / (1000d * 1000 * 1000), Toast.LENGTH_LONG).show();
+                            }, 0);
+                            int[] position = new int[]{45, 300, 673 - 45, 930 - 300};
+                            int step_len = (position[2] + position[3]) / 12;
+                            for (int i = 0; i < ret.size(); ) {
+                                int key = ret.get(i);
+                                int idx = (key >> 3);
+                                int step = (key & (((1 << 3) - 1)));
+                                Log.e("TAG", "idx:" + idx + "step:" + step);
+                                step = ((step & 0b100) != 0) ? -(step & 0b11) - 1 : step + 1;
+                                Log.e("TAG", "idx:" + idx + "step:" + step);
+                                Block op = blocks[idx];
+                                int s_x, e_x, s_y, e_y;
+                                s_x = e_x = (int) (position[0] + (op.col + 0.5) * step_len);
+                                s_y = e_y = (int) (position[1] + (op.row + 0.5) * step_len);
+                                if (op.is_horizontal) {
+                                    op.col += step;
+                                    e_x = (int) (position[0] + (op.col + 0.5) * step_len);
+                                } else {
+                                    op.row += step;
+                                    e_y = (int) (position[1] + (op.row + 0.5) * step_len);
+                                }
+                                Path path = new Path();
+                                path.moveTo(s_x, s_y);
+                                path.lineTo(e_x, e_y);
+                                if (MyAccessibilityService.service != null) {
+                                    MyAccessibilityService.service.swipe2(path, 400);
+                                }
+                                try {
+                                    Thread.sleep(600);
+                                } catch (InterruptedException e) {
+                                    e.printStackTrace();
+                                }
+                                if (i == 0) {
+                                    boolean[] ccc = {false, false};
+                                    getImage(new CallBack() {
+                                        @Override
+                                        void onRes(Object res) {
+                                            String res_s = (String) res;
+                                            ccc[1] = res_str.equals(res_s);
+                                            ccc[0] = true;
+                                        }
+                                    });
+                                    while (!ccc[0]) {
+                                        try {
+                                            Thread.sleep(10);
+                                        } catch (InterruptedException e) {
+                                            e.printStackTrace();
+                                        }
+                                    }
+                                    //滑动失败,回退滑块
+                                    if (ccc[1]) {
+                                        if (op.is_horizontal) {
+                                            op.col -= step;
+                                        } else {
+                                            op.row -= step;
+                                        }
+                                    } else {
+                                        i++;
+                                    }
+                                } else {
+                                    i++;
+                                }
+                            }
+                            handler.postDelayed(() -> {
+                                Toast.makeText(getApplicationContext(), "结束滑动", Toast.LENGTH_LONG).show();
+                            }, 0);
+                            try {
+                                Thread.sleep(5000);
+                            } catch (InterruptedException e) {
+                                e.printStackTrace();
+                            }
+                            Path path = new Path();
+                            path.moveTo(690, 298);
+                            if (MyAccessibilityService.service != null) {
+                                MyAccessibilityService.service.swipe2(path, 100);
+                            }
+                            try {
+                                Thread.sleep(600);
+                            } catch (InterruptedException e) {
+                                e.printStackTrace();
+                            }
+                            path = new Path();
+                            path.moveTo(524, 828);
+                            if (MyAccessibilityService.service != null) {
+                                MyAccessibilityService.service.swipe2(path, 100);
+                            }
+                            try {
+                                Thread.sleep(5000);
+                            } catch (InterruptedException e) {
+                                e.printStackTrace();
+                            }
+//
+                            cccc[0] = true;
+                        }
+                    });
+                    while (!cccc[0]){
+                        try {
+                            Thread.sleep(10);
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                }
+            }
+        }).start();
         FloatingButtonService.onClickListener = view -> {
             Log.e("TAG", "onClickListener");
-            getImage();
+            run_work = !run_work;
+            Toast.makeText(MainActivity.this, run_work ? "自动化开启" : "自动化停止", Toast.LENGTH_SHORT).show();
         };
     }
 
@@ -143,87 +280,28 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    public void getImage() {
-        int rowPadding = rowStride - pixelStride * screenWidth;
-        Bitmap bitmap = Bitmap.createBitmap(screenWidth + rowPadding / pixelStride,
-                screenHeight, Bitmap.Config.ARGB_8888);
-        bitmap.copyPixelsFromBuffer(buffer);
-        String fileName = null;
-        try {
-            File dir = getExternalFilesDir(null);
-            fileName = dir.getAbsolutePath() + "/" + "test.png";
-            Log.e("fileName", fileName);
-            FileOutputStream fos = new FileOutputStream(fileName);
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos);
-            fos.close();
-            String finalFileName = fileName;
-            new Thread(() -> {
-                class Block {
-                    public int row;
-                    public int col;
-                    public int len;
-                    public boolean is_horizontal;
+    abstract class CallBack {
+        abstract void onRes(Object res);
+    }
 
-                    public Block(int val) {
-                        is_horizontal = (val & (1 << 7)) != 0;
-                        len = ((val & (1 << 6)) >> 6) + 2;
-                        row = (val >> 3) & ((1 << 3) - 1);
-                        col = val & ((1 << 3) - 1);
-                    }
-                }
-                String res = py.getModule("main").callAttr("get_input_list", finalFileName).toJava(String.class);
-                Log.e("TAG", res);
-                String[] input = res.substring(1, res.length() - 1).split(", ");
-                Block[] blocks = new Block[input.length];
-                for (int i = 0; i < input.length; i++) {
-                    blocks[i] = new Block(Integer.parseInt(input[i]));
-                }
-                ArrayList<Integer> ret = solve(input);
-                handler.postDelayed(() -> {
-                    Toast.makeText(getApplicationContext(), "开始滑动:" + (ret.size() - 1), Toast.LENGTH_LONG).show();
-                }, 0);
-                int[] position = new int[]{45, 300, 673 - 45, 930 - 300};
-                int step_len = (position[2] + position[3]) / 12;
-                for (Integer key : ret) {
-                    int idx = (key >> 3);
-                    int step = (key & (((1 << 3) - 1)));
-                    Log.e("TAG", "idx:" + idx + "step:" + step);
-                    step = ((step & 0b100) != 0) ? -(step & 0b11) - 1 : step + 1;
-                    Log.e("TAG", "idx:" + idx + "step:" + step);
-                    Block op = blocks[idx];
-                    int s_x, e_x, s_y, e_y;
-                    s_x = e_x = (int) (position[0] + (op.col + 0.5) * step_len);
-                    s_y = e_y = (int) (position[1] + (op.row + 0.5) * step_len);
-                    if (op.is_horizontal) {
-                        op.col += step;
-                        e_x = (int) (position[0] + (op.col + 0.5) * step_len);
-                    } else {
-                        op.row += step;
-                        e_y = (int) (position[1] + (op.row + 0.5) * step_len);
-                    }
-                    Path path = new Path();
-                    path.moveTo(s_x, s_y);
-                    path.lineTo(e_x, e_y);
-                    if (MyAccessibilityService.service != null) {
-                        MyAccessibilityService.service.swipe2(path, 400);
-                    }
-                    try {
-                        Thread.sleep(600);
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
-                    }
-                }
-//                String res2 = py.getModule("main").callAttr("main", finalFileName).toJava(String.class);
-//                for (String s : res2.split(",")) {
-//                    Log.e("TAG", s);
-//                }
-                handler.postDelayed(() -> {
-                    Toast.makeText(getApplicationContext(), "结束滑动", Toast.LENGTH_LONG).show();
-                }, 0);
-            }).start();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+    public void getImage(CallBack callBack) {
+        new Thread(() -> {
+            try {
+                int rowPadding = rowStride - pixelStride * screenWidth;
+                Bitmap bitmap = Bitmap.createBitmap(screenWidth + rowPadding / pixelStride,
+                        screenHeight, Bitmap.Config.ARGB_8888);
+                bitmap.copyPixelsFromBuffer(buffer);
+                File dir = getExternalFilesDir(null);
+                String fileName = dir.getAbsolutePath() + "/" + "test.png";
+                FileOutputStream fos = new FileOutputStream(fileName);
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos);
+                fos.close();
+                callBack.onRes(py.getModule("main").callAttr("get_input_list", fileName).toJava(String.class));
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }).start();
+
     }
 
     public boolean check_target(int val) {
@@ -297,6 +375,7 @@ public class MainActivity extends AppCompatActivity {
         while (!queue.isEmpty()) {
             int[] now = queue.poll();
             ArrayList<Integer> now_res = queue_res.poll();
+            assert now != null;
             if (check_target(now[0])) {
                 return now_res;
             }
@@ -309,6 +388,7 @@ public class MainActivity extends AppCompatActivity {
                     if (val != 0) {
                         int[] tmp = Arrays.copyOf(now, len);
                         tmp[i] = val;
+                        assert now_res != null;
                         ArrayList<Integer> new_res = new ArrayList<>(now_res);
                         new_res.add((j - 1) | (i << 3));
                         queue.add(tmp);
@@ -322,6 +402,7 @@ public class MainActivity extends AppCompatActivity {
                     if (val != 0) {
                         int[] tmp = Arrays.copyOf(now, len);
                         tmp[i] = val;
+                        assert now_res != null;
                         ArrayList<Integer> new_res = new ArrayList<>(now_res);
                         new_res.add((j + 3) | (i << 3));
                         queue.add(tmp);
