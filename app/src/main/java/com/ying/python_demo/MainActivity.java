@@ -4,6 +4,7 @@ import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.AppCompatActivity;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
@@ -24,6 +25,8 @@ import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.View;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
 import android.widget.Toast;
 
 import com.chaquo.python.Python;
@@ -38,6 +41,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.Queue;
+import java.util.Set;
 
 public class MainActivity extends AppCompatActivity {
     public Handler handler = new Handler();
@@ -62,6 +66,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    @SuppressLint("SetJavaScriptEnabled")
     @RequiresApi(api = Build.VERSION_CODES.M)
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -83,6 +88,16 @@ public class MainActivity extends AppCompatActivity {
         startActivity(intent);
         startFloatingButtonService();
         new Thread(() -> {
+            py.getModule("flask_server").callAttr("run_server");
+        }).start();
+        WebView webView = (WebView) findViewById(R.id.web_view);
+        WebSettings webSettings = webView.getSettings();
+        webSettings.setJavaScriptEnabled(true);
+        handler.postDelayed(() -> {
+            webView.loadUrl("http://localhost:8888");
+        }, 200);
+
+        new Thread(() -> {
             while (true) {
                 if (run_work) {
                     final boolean[] cccc = {false};
@@ -90,6 +105,7 @@ public class MainActivity extends AppCompatActivity {
                         @Override
                         void onRes(Object res) {
                             String res_str = (String) res;
+                            Log.e("res", res_str);
                             String[] input = res_str.substring(1, res_str.length() - 1).split(", ");
                             Block[] blocks = new Block[input.length];
                             for (int i = 0; i < input.length; i++) {
@@ -196,7 +212,7 @@ public class MainActivity extends AppCompatActivity {
                             cccc[0] = true;
                         }
                     });
-                    while (!cccc[0]){
+                    while (!cccc[0]) {
                         try {
                             Thread.sleep(10);
                         } catch (InterruptedException e) {
@@ -211,6 +227,7 @@ public class MainActivity extends AppCompatActivity {
             run_work = !run_work;
             Toast.makeText(MainActivity.this, run_work ? "自动化开启" : "自动化停止", Toast.LENGTH_SHORT).show();
         };
+
     }
 
     public void onClick(View view) {
@@ -304,14 +321,7 @@ public class MainActivity extends AppCompatActivity {
 
     }
 
-    public boolean check_target(int val) {
-        boolean is_horizontal = (val & (1 << 7)) != 0;
-        int row = (val >> 3) & ((1 << 3) - 1);
-        int col = val & ((1 << 3) - 1);
-        return is_horizontal && row == 2 && col == 4;
-    }
-
-    public long get_map_val(int[] block_values) {
+    public long get_map_val(ArrayList<Integer> block_values) {
         long map_val = 0;
         for (int val : block_values) {
             boolean is_horizontal = (val & (1 << 7)) != 0;
@@ -338,77 +348,103 @@ public class MainActivity extends AppCompatActivity {
         int new_s_row = row;
         int new_e_row = row + (is_horizontal ? 0 : step);
         if (is_horizontal) {
-            new_s_col = col + step;
-            new_e_col = new_s_col + len;
+            if (step < 0) {
+                new_s_col = col + step;
+                new_e_col = col + len;
+            } else {
+                new_e_col = col + len + step;
+            }
         } else {
-            new_s_row = row + step;
-            new_e_row = new_s_row + len;
+            if (step < 0) {
+                new_s_row = row + step;
+                new_e_row = row + len;
+            } else {
+                new_e_row = row + len + step;
+            }
         }
         if (new_s_col < 0 || new_e_col > 6 || new_s_row < 0 || new_e_row > 6) return 0;
-        long mask = 0;
+        long mask_s = 0;
         for (int i = 0; i < len; ++i) {
-            mask <<= (is_horizontal ? 1 : 6);
-            mask += 1;
+            mask_s <<= (is_horizontal ? 1 : 6);
+            mask_s += 1;
         }
-        map_val &= (~(mask << (row * 6 + col)));
-        if ((map_val & (mask << (new_s_row * 6 + new_s_col))) != 0) return 0;
+        long mask_b = 0;
+        for (int i = 0; i < len + Math.abs(step); ++i) {
+            mask_b <<= (is_horizontal ? 1 : 6);
+            mask_b += 1;
+        }
+        map_val &= (~(mask_s << (row * 6 + col)));
+        if ((map_val & (mask_b << (new_s_row * 6 + new_s_col))) != 0) return 0;
+        if (is_horizontal)
+            col += step;
+        else
+            row += step;
+        map_val |= (mask_s << (row * 6 + col));
+        if (row == 2 && is_horizontal) {
+            long mask_t = 0;
+            for (int i = 0; i < 6 - (col + len); ++i) {
+                mask_t <<= 1;
+                mask_t += 1;
+            }
+            if ((map_val & (mask_t << (row * 6 + col + len))) == 0) {
+                return (1 << 8) - 1;
+            }
+        }
         int new_val = 1 << 8;
         new_val |= (is_horizontal ? 1 << 7 : 0);
         new_val |= ((len - 2) << 6);
-        new_val |= (new_s_row << 3);
-        new_val |= new_s_col;
+        new_val |= (row << 3);
+        new_val |= col;
         return new_val;
     }
 
-    public ArrayList<Integer> solve(String[] input) {
-        HashSet<Long> hashSet = new HashSet<>();
+    private ArrayList<Integer> solve(String[] input) {
+        Set<ArrayList<Integer>> hashSet = new HashSet<>();
         int len = input.length;
-        int[] data = new int[len];
-        len = 0;
+        ArrayList<Integer> data = new ArrayList<>(len);
         for (String s : input) {
-            data[len++] = Integer.parseInt(s);
+            data.add(Integer.parseInt(s));
         }
-        Queue<int[]> queue = new LinkedList<>();
+        Queue<ArrayList<Integer>> queue = new LinkedList<>();
         Queue<ArrayList<Integer>> queue_res = new LinkedList<>();
         queue.add(data);
         queue_res.add(new ArrayList<>());
         while (!queue.isEmpty()) {
-            int[] now = queue.poll();
+            ArrayList<Integer> now = queue.poll();
             ArrayList<Integer> now_res = queue_res.poll();
-            assert now != null;
-            if (check_target(now[0])) {
-                return now_res;
-            }
             long map_val = get_map_val(now);
-            if (hashSet.contains(map_val)) continue;
-            hashSet.add(map_val);
+            hashSet.add(now);
+            int[] dirs = {-1, 1};
             for (int i = 0; i < len; i++) {
-                for (int j = 1; j < 5; ++j) {
-                    int val = check(now[i], j, map_val);
-                    if (val != 0) {
-                        int[] tmp = Arrays.copyOf(now, len);
-                        tmp[i] = val;
-                        assert now_res != null;
-                        ArrayList<Integer> new_res = new ArrayList<>(now_res);
-                        new_res.add((j - 1) | (i << 3));
-                        queue.add(tmp);
-                        queue_res.add(new_res);
-                    } else {
-                        break;
-                    }
-                }
-                for (int j = 1; j < 5; ++j) {
-                    int val = check(now[i], -j, map_val);
-                    if (val != 0) {
-                        int[] tmp = Arrays.copyOf(now, len);
-                        tmp[i] = val;
-                        assert now_res != null;
-                        ArrayList<Integer> new_res = new ArrayList<>(now_res);
-                        new_res.add((j + 3) | (i << 3));
-                        queue.add(tmp);
-                        queue_res.add(new_res);
-                    } else {
-                        break;
+                for (int dir : dirs) {
+                    for (int j = 1; j < 5; ++j) {
+                        int val = check(now.get(i), j * dir, map_val);
+                        if (val != 0) {
+                            if (val == (1 << 8) - 1) {
+                                if (dir < 0) {
+                                    now_res.add((j + 3) | (i << 3));
+                                } else {
+                                    now_res.add((j - 1) | (i << 3));
+                                }
+                                return now_res;
+                            }
+                            ArrayList<Integer> tmp = new ArrayList<>(now);
+                            tmp.set(i, val & ((1 << 8) - 1));
+                            if (hashSet.contains(tmp)) {
+                                continue;
+                            }
+                            ArrayList<Integer> new_res = new ArrayList<>(now_res);
+                            if (dir < 0) {
+                                new_res.add((j + 3) | (i << 3));
+                            } else {
+                                new_res.add((j - 1) | (i << 3));
+                            }
+                            queue.add(tmp);
+                            queue_res.add(new_res);
+                            hashSet.add(tmp);
+                        } else {
+                            break;
+                        }
                     }
                 }
             }

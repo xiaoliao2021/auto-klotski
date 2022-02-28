@@ -20,6 +20,8 @@ android {
         python {
             pip {
                 install "opencv-python"
+                install "flask"
+                install "gevent"
             }
         }
     }
