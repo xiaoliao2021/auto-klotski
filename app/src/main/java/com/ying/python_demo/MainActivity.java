@@ -112,16 +112,16 @@ public class MainActivity extends AppCompatActivity {
                                 blocks[i] = new Block(Integer.parseInt(input[i]));
                             }
                             long start_time = System.nanoTime();
-                            ArrayList<Integer> ret = solve(input);
+                            char[] ret = solve(input);
                             long end_time = System.nanoTime();
                             handler.postDelayed(() -> {
-                                Toast.makeText(getApplicationContext(), "步数:" + (ret.size() - 1) +
+                                Toast.makeText(getApplicationContext(), "步数:" + (ret.length - 1) +
                                         "耗时:" + (end_time - start_time) / (1000d * 1000 * 1000), Toast.LENGTH_LONG).show();
                             }, 0);
                             int[] position = new int[]{45, 300, 673 - 45, 930 - 300};
                             int step_len = (position[2] + position[3]) / 12;
-                            for (int i = 0; i < ret.size(); ) {
-                                int key = ret.get(i);
+                            for (int i = 0; i < ret.length; ) {
+                                int key = ret[i];
                                 int idx = (key >> 3);
                                 int step = (key & (((1 << 3) - 1)));
                                 Log.e("TAG", "idx:" + idx + "step:" + step);
@@ -321,32 +321,41 @@ public class MainActivity extends AppCompatActivity {
 
     }
 
-    public long get_map_val(ArrayList<Integer> block_values) {
+    //获取当前转态下的木块占用情况
+    public long get_map_val(char[] block_values) {
         long map_val = 0;
-        for (int val : block_values) {
+        //解析每块木块信息
+        for (char val : block_values) {
             boolean is_horizontal = (val & (1 << 7)) != 0;
             int len = ((val & (1 << 6)) >> 6) + 2;
             int row = (val >> 3) & ((1 << 3) - 1);
             int col = val & ((1 << 3) - 1);
+            //获取木块占用情况
             long mask = 0;
             for (int i = 0; i < len; ++i) {
                 mask <<= (is_horizontal ? 1 : 6);
                 mask += 1;
             }
+            //设置木块占用
             map_val |= (mask << (row * 6 + col));
         }
+        //返回全部木块占用情况
         return map_val;
     }
 
-    public int check(int val, int step, long map_val) {
+    //检测是否逃脱完成
+    public int check(char val, int step, long map_val) {
+        //解析当前操作木块信息
         boolean is_horizontal = (val & (1 << 7)) != 0;
         int len = ((val & (1 << 6)) >> 6) + 2;
         int row = (val >> 3) & ((1 << 3) - 1);
         int col = val & ((1 << 3) - 1);
+        //获取此操作后木块所在位置
         int new_s_col = col;
         int new_e_col = col + (is_horizontal ? step : 0);
         int new_s_row = row;
         int new_e_row = row + (is_horizontal ? 0 : step);
+        //更新此操作后木块所在位置
         if (is_horizontal) {
             if (step < 0) {
                 new_s_col = col + step;
@@ -362,34 +371,43 @@ public class MainActivity extends AppCompatActivity {
                 new_e_row = row + len + step;
             }
         }
+        //判断操作是否会越界
         if (new_s_col < 0 || new_e_col > 6 || new_s_row < 0 || new_e_row > 6) return 0;
+        //获取木块当前占用mask
         long mask_s = 0;
         for (int i = 0; i < len; ++i) {
             mask_s <<= (is_horizontal ? 1 : 6);
             mask_s += 1;
         }
+        //获取此操作所需要的占用mask
         long mask_b = 0;
         for (int i = 0; i < len + Math.abs(step); ++i) {
             mask_b <<= (is_horizontal ? 1 : 6);
             mask_b += 1;
         }
+        //清除当前木块占用
         map_val &= (~(mask_s << (row * 6 + col)));
+        //判断可否执行当前操作
         if ((map_val & (mask_b << (new_s_row * 6 + new_s_col))) != 0) return 0;
         if (is_horizontal)
             col += step;
         else
             row += step;
+        //获取执行后的占用情况
         map_val |= (mask_s << (row * 6 + col));
+        //判断此操作后能否逃脱
         if (row == 2 && is_horizontal) {
             long mask_t = 0;
             for (int i = 0; i < 6 - (col + len); ++i) {
                 mask_t <<= 1;
                 mask_t += 1;
             }
+            //此操作后能逃脱返回ob01111111
             if ((map_val & (mask_t << (row * 6 + col + len))) == 0) {
                 return (1 << 8) - 1;
             }
         }
+        //返回操作后此木块得最新信息
         int new_val = 1 << 8;
         new_val |= (is_horizontal ? 1 << 7 : 0);
         new_val |= ((len - 2) << 6);
@@ -398,57 +416,78 @@ public class MainActivity extends AppCompatActivity {
         return new_val;
     }
 
-    private ArrayList<Integer> solve(String[] input) {
-        Set<ArrayList<Integer>> hashSet = new HashSet<>();
+    //获取新的结果
+    private char[] get_new_res(char[] now_res, char val) {
+        //拷贝之前的结果
+        char[] res = Arrays.copyOf(now_res, now_res.length + 1);
+        res[now_res.length] = val;
+        return res;
+    }
+
+    //获取滑动路径
+    private char[] solve(String[] input) {
+        //存储出现过的转态,避免重复计算
+        Set<String> hashSet = new HashSet<>();
+        /*提取输入数据*/
         int len = input.length;
-        ArrayList<Integer> data = new ArrayList<>(len);
+        char[] data = new char[len];
+        len = 0;
         for (String s : input) {
-            data.add(Integer.parseInt(s));
+            data[len++] = (char) Integer.parseInt(s);
         }
-        Queue<ArrayList<Integer>> queue = new LinkedList<>();
-        Queue<ArrayList<Integer>> queue_res = new LinkedList<>();
+        //转态队列
+        Queue<char[]> queue = new LinkedList<>();
+        //结果队列
+        Queue<char[]> queue_res = new LinkedList<>();
         queue.add(data);
-        queue_res.add(new ArrayList<>());
+        queue_res.add(new char[0]);
+        hashSet.add(new String(data));
+        //广度优先搜索
         while (!queue.isEmpty()) {
-            ArrayList<Integer> now = queue.poll();
-            ArrayList<Integer> now_res = queue_res.poll();
+            //出队当前木块状态
+            char[] now = queue.poll();
+            //出队到达当前转态的路径
+            char[] now_res = queue_res.poll();
+            //获取当前转态木块占用情况
             long map_val = get_map_val(now);
-            hashSet.add(now);
-            int[] dirs = {-1, 1};
+            int[] dirs = {-1, 1};//木块尝试相两个方向移动
+            //尝试移动每个木块
             for (int i = 0; i < len; i++) {
                 for (int dir : dirs) {
-                    for (int j = 1; j < 5; ++j) {
-                        int val = check(now.get(i), j * dir, map_val);
+                    //木块最多一次移动4步
+                    for (int j = 1; j <= 4; ++j) {
+                        //获取当前操作结果
+                        int val = check(now[i], j * dir, map_val);
                         if (val != 0) {
+                            //更新结果路径
+                            char[] tem_res = dir < 0 ? get_new_res(now_res, (char) ((j + 3) | (i << 3))) : get_new_res(now_res, (char) ((j - 1) | (i << 3)));
+                            //当前操作可逃脱成功
                             if (val == (1 << 8) - 1) {
-                                if (dir < 0) {
-                                    now_res.add((j + 3) | (i << 3));
-                                } else {
-                                    now_res.add((j - 1) | (i << 3));
-                                }
-                                return now_res;
+                                //返回最优解结果
+                                return tem_res;
                             }
-                            ArrayList<Integer> tmp = new ArrayList<>(now);
-                            tmp.set(i, val & ((1 << 8) - 1));
-                            if (hashSet.contains(tmp)) {
+                            //将操作后的转态入队
+                            char[] tmp = Arrays.copyOf(now, len);
+                            //只提取后八位
+                            tmp[i] = (char) (val & ((1 << 8) - 1));
+                            //转成String加速判断
+                            String str = new String(tmp);
+                            //如果操作后的状态已经存在则不处理
+                            if (hashSet.contains(str)) {
                                 continue;
                             }
-                            ArrayList<Integer> new_res = new ArrayList<>(now_res);
-                            if (dir < 0) {
-                                new_res.add((j + 3) | (i << 3));
-                            } else {
-                                new_res.add((j - 1) | (i << 3));
-                            }
                             queue.add(tmp);
-                            queue_res.add(new_res);
-                            hashSet.add(tmp);
+                            queue_res.add(tem_res);
+                            hashSet.add(str);
                         } else {
+                            //操作不可行
                             break;
                         }
                     }
                 }
             }
         }
-        return new ArrayList<>();
+        //找不到解
+        return new char[0];
     }
 }
